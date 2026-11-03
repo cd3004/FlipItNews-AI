@@ -5,8 +5,15 @@ import numpy as np
 import pickle
 import re
 import string
-
+from pathlib import Path
 from tensorflow.keras.preprocessing.sequence import pad_sequences
+
+# --------------------------------------------------
+# 1. CONFIGURATION
+# --------------------------------------------------
+
+BASE_DIR = Path(__file__).parent
+MAX_LEN = 500
 
 st.set_page_config(
     page_title="FlipItNews AI",
@@ -14,110 +21,186 @@ st.set_page_config(
     layout="wide"
 )
 
-# Load trained models
+# --------------------------------------------------
+# 2. LOAD TRAINED MODEL AND SUPPORTING FILES
+# --------------------------------------------------
+
 @st.cache_resource
 def load_models():
 
+    # Load trained RNN model
     model = tf.keras.models.load_model(
-        "/content/flipitnews_rnn.keras"
+        BASE_DIR / "flipitnews_rnn.keras"
     )
 
-    with open("/content/flipitnews_tokenizer.pkl", "rb") as f:
+    # Load tokenizer
+    with open(BASE_DIR / "flipitnews_tokenizer.pkl", "rb") as f:
         tokenizer = pickle.load(f)
 
-    with open("/content/flipitnews_label_encoder.pkl", "rb") as f:
+    # Load label encoder
+    with open(BASE_DIR / "flipitnews_label_encoder.pkl", "rb") as f:
         encoder = pickle.load(f)
 
-    return model, tokenizer, encoder
+    # Load stopwords
+    with open(BASE_DIR / "flipitnews_stopwords.pkl", "rb") as f:
+        stop_words = pickle.load(f)
 
-model, tokenizer, encoder = load_models()
+    return model, tokenizer, encoder, stop_words
 
-MAX_LEN = 500
 
-# Dashboard design
+model, tokenizer, encoder, stop_words = load_models()
+
+# --------------------------------------------------
+# 3. TEXT PREPROCESSING
+# --------------------------------------------------
+
+def preprocess_text(text):
+
+    # Convert text to lowercase
+    text = text.lower()
+
+    # Remove punctuation
+    text = text.translate(
+        str.maketrans('', '', string.punctuation)
+    )
+
+    # Remove extra spaces
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    # Remove English stopwords
+    tokens = [
+        word for word in text.split()
+        if word not in stop_words
+    ]
+
+    return " ".join(tokens)
+
+
+# --------------------------------------------------
+# 4. APPLICATION HEADER
+# --------------------------------------------------
+
 st.title("📰 FlipItNews AI News Classifier")
 
 st.write(
-    "An NLP-based application that automatically "
-    "classifies news articles into different categories."
+    "An intelligent news classification system powered by "
+    "Natural Language Processing and Recurrent Neural Networks."
 )
 
 st.divider()
 
-st.subheader("Enter News Article")
+# --------------------------------------------------
+# 5. NEWS INPUT SECTION
+# --------------------------------------------------
 
-title = st.text_input("News Headline")
+st.subheader("News Article Classification")
+
+title = st.text_input(
+    "Enter News Headline",
+    placeholder="Enter the news headline..."
+)
 
 content = st.text_area(
-    "News Article Content",
-    height=200,
+    "Enter News Article Content",
+    height=220,
     placeholder="Paste your news article here..."
 )
+
+# --------------------------------------------------
+# 6. PREDICTION
+# --------------------------------------------------
 
 if st.button("Predict News Category", type="primary"):
 
     if not title.strip() and not content.strip():
 
-        st.warning("Please enter a headline or news article.")
+        st.warning(
+            "Please enter a news headline or article."
+        )
 
     else:
 
-        text = title + " " + content
+        with st.spinner("Analyzing the news article..."):
 
-        # Text preprocessing
-        text = text.lower()
-        text = text.translate(
-            str.maketrans('', '', string.punctuation)
-        )
-        text = re.sub(r'\s+', ' ', text).strip()
+            # Combine headline and article
+            combined_text = title + " " + content
 
-        # Tokenization and padding
-        sequence = tokenizer.texts_to_sequences([text])
+            # Preprocess input
+            cleaned_text = preprocess_text(combined_text)
 
-        padded = pad_sequences(
-            sequence,
-            maxlen=MAX_LEN,
-            padding='post',
-            truncating='post'
-        )
+            # Convert text into sequences
+            sequence = tokenizer.texts_to_sequences(
+                [cleaned_text]
+            )
 
-        # Prediction
-        prediction = model.predict(padded, verbose=0)[0]
+            # Pad sequence
+            padded = pad_sequences(
+                sequence,
+                maxlen=MAX_LEN,
+                padding="post",
+                truncating="post"
+            )
 
-        predicted_index = np.argmax(prediction)
+            # Predict category
+            prediction = model.predict(
+                padded,
+                verbose=0
+            )[0]
 
-        category = encoder.inverse_transform(
-            [predicted_index]
-        )[0]
+            predicted_index = np.argmax(prediction)
 
-        confidence = prediction[predicted_index] * 100
+            category = encoder.inverse_transform(
+                [predicted_index]
+            )[0]
 
-        st.success("Classification Completed!")
+            confidence = float(
+                prediction[predicted_index]
+            ) * 100
 
-        st.subheader("Prediction Result")
+        # --------------------------------------------------
+        # 7. DISPLAY RESULTS
+        # --------------------------------------------------
 
-        st.metric(
-            "Predicted News Category",
-            category.upper()
-        )
+        st.success("News classification completed!")
 
-        st.metric(
-            "Model Confidence",
-            f"{confidence:.2f}%"
-        )
+        col1, col2 = st.columns(2)
 
-        st.subheader("Category Probability")
+        with col1:
+            st.metric(
+                label="Predicted Category",
+                value=category.upper()
+            )
+
+        with col2:
+            st.metric(
+                label="Prediction Confidence",
+                value=f"{confidence:.2f}%"
+            )
+
+        # --------------------------------------------------
+        # 8. CATEGORY-WISE PREDICTION SCORES
+        # --------------------------------------------------
+
+        st.subheader("Category-wise Prediction Scores")
 
         for i, label in enumerate(encoder.classes_):
 
+            score = float(prediction[i])
+
             st.write(f"**{label.title()}**")
 
-            st.progress(float(prediction[i]))
+            st.progress(score)
 
-            st.write(f"{prediction[i]*100:.2f}%")
+            st.caption(
+                f"{score * 100:.2f}%"
+            )
+
+# --------------------------------------------------
+# 9. FOOTER
+# --------------------------------------------------
 
 st.divider()
 
 st.caption(
-    "FlipItNews AI | Powered by NLP, Word2Vec and LSTM"
+    "FlipItNews AI | NLP | Word2Vec | LSTM | RGIPT"
 )
